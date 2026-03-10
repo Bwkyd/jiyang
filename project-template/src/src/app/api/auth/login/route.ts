@@ -4,9 +4,33 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyPassword } from "@/lib/auth/password";
 import { cookies } from "next/headers";
+import { rateLimit } from "@/lib/rate-limit";
+
+// 登录：每个 IP 每分钟最多 5 次
+const LOGIN_LIMIT = 5;
+const LOGIN_WINDOW_MS = 60_000;
 
 export async function POST(request: NextRequest) {
   try {
+    // 速率限制
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "unknown";
+    const rl = rateLimit(`login:${ip}`, LOGIN_LIMIT, LOGIN_WINDOW_MS);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "登录尝试过于频繁，请稍后再试" },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              Math.ceil((rl.resetAt - Date.now()) / 1000)
+            ),
+          },
+        }
+      );
+    }
+
     const { username, password } = await request.json();
 
     if (!username || !password) {

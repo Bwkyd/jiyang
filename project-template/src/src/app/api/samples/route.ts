@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
         : undefined,
       status: searchParams.get("status") || undefined,
       trackingNumber: searchParams.get("tracking") || undefined,
+      keyword: searchParams.get("keyword") || undefined,
       page: Number(searchParams.get("page") || "1"),
       pageSize: Number(searchParams.get("pageSize") || "20"),
     };

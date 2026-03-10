@@ -125,3 +125,27 @@ export const settings = pgTable("settings", {
   value: varchar("value", { length: 200 }).notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// ===== 审计日志表 =====
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: serial("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    action: varchar("action", { length: 50 }).notNull(), // e.g. sample.status_change, sample.create
+    targetType: varchar("target_type", { length: 50 }).notNull(), // e.g. sample, talent
+    targetId: varchar("target_id", { length: 50 }).notNull(),
+    detail: text("detail"), // JSON string with before/after values
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("idx_audit_logs_user_id").on(table.userId),
+    targetIdx: index("idx_audit_logs_target").on(
+      table.targetType,
+      table.targetId
+    ),
+    createdAtIdx: index("idx_audit_logs_created_at").on(table.createdAt),
+  })
+);
