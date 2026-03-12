@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth/session";
-import { updateSampleStatus } from "@/services/sample.service";
-import { updateSampleStatusSchema } from "@/lib/validations/sample";
-import type { SampleStatus } from "@/types";
+import { updateSampleTags } from "@/services/sample.service";
+import { updateSampleTagsSchema } from "@/lib/validations/sample";
 
 export async function PATCH(
   request: NextRequest,
@@ -12,7 +11,7 @@ export async function PATCH(
     const user = await requireSession();
     const { id } = await params;
     const body = await request.json();
-    const parsed = updateSampleStatusSchema.safeParse(body);
+    const parsed = updateSampleTagsSchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -21,10 +20,10 @@ export async function PATCH(
       );
     }
 
-    const updated = await updateSampleStatus({
+    const updated = await updateSampleTags({
       sampleId: Number(id),
       userId: user.id,
-      newStatus: parsed.data.status as SampleStatus,
+      abnormalNote: parsed.data.abnormalNote,
       returnTrackingNumber: parsed.data.returnTrackingNumber,
     });
 
@@ -34,11 +33,11 @@ export async function PATCH(
       if (error.message === "UNAUTHORIZED") {
         return NextResponse.json({ error: "未登录" }, { status: 401 });
       }
-      if (error.message.includes("不允许") || error.message.includes("只有")) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error.message.includes("不存在")) {
+        return NextResponse.json({ error: error.message }, { status: 404 });
       }
     }
-    console.error("PATCH /api/samples/[id]/status error:", error);
+    console.error("PATCH /api/samples/[id]/tags error:", error);
     return NextResponse.json({ error: "服务器内部错误" }, { status: 500 });
   }
 }

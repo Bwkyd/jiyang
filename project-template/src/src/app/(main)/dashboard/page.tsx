@@ -6,8 +6,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Package, AlertTriangle, Clock, CheckCircle } from "lucide-react";
-import { StatusBadge } from "@/components/sample/StatusBadge";
-import type { SampleStatus } from "@/types";
+import { StatusBadge, SampleTags } from "@/components/sample/StatusBadge";
 
 export default async function DashboardPage() {
   const user = await getSession();
@@ -29,17 +28,17 @@ export default async function DashboardPage() {
       href: "/samples?status=sent",
     },
     {
-      label: "催收中",
-      value: stats["collecting"] || 0,
-      icon: Clock,
-      color: "text-orange-600",
-      href: "/samples?status=collecting",
+      label: "已归还",
+      value: stats["returned"] || 0,
+      icon: CheckCircle,
+      color: "text-green-600",
+      href: "/samples?status=returned",
     },
     {
       label: "待收货",
       value: stats["pending_receipt"] || 0,
       icon: Clock,
-      color: "text-gray-600",
+      color: "text-amber-600",
       href: "/samples?status=pending_receipt",
     },
     {
@@ -47,7 +46,7 @@ export default async function DashboardPage() {
       value: overdue.length,
       icon: AlertTriangle,
       color: "text-red-600",
-      href: "/collections",
+      href: "/samples?status=sent",
     },
   ];
 
@@ -119,8 +118,13 @@ export default async function DashboardPage() {
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-mono">{sample.skuCode}</span>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <StatusBadge status={sample.status as SampleStatus} />
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={sample.status} />
+                    <SampleTags
+                      abnormalNote={sample.abnormalNote}
+                      returnTrackingNumber={sample.returnTrackingNumber}
+                      status={sample.status}
+                    />
                     <span className="text-xs text-muted-foreground">
                       {new Date(sample.sentAt).toLocaleDateString("zh-CN")}
                     </span>

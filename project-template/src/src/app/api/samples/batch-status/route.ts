@@ -6,8 +6,7 @@ import type { SampleStatus } from "@/types";
 
 const batchUpdateSchema = z.object({
   sampleIds: z.array(z.number().int().positive()).min(1).max(100),
-  status: z.enum(["collecting", "pending_receipt", "returned", "abnormal"]),
-  abnormalNote: z.string().max(500).optional(),
+  status: z.enum(["returned"]),
   returnTrackingNumber: z.string().max(50).optional(),
 });
 
@@ -28,7 +27,6 @@ export async function PATCH(request: NextRequest) {
       sampleIds: parsed.data.sampleIds,
       userId: user.id,
       newStatus: parsed.data.status as SampleStatus,
-      abnormalNote: parsed.data.abnormalNote,
       returnTrackingNumber: parsed.data.returnTrackingNumber,
     });
 

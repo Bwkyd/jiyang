@@ -22,7 +22,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: "工作台", href: "/dashboard", icon: LayoutDashboard },
   { label: "扫码寄样", href: "/samples/new", icon: ScanBarcode },
-  { label: "寄样记录", href: "/samples", icon: Package },
+  { label: "寄样管理", href: "/samples", icon: Package },
   { label: "达人管理", href: "/talents", icon: Users },
   { label: "账号管理", href: "/admin/users", icon: UserCog, adminOnly: true },
   { label: "设置", href: "/settings", icon: Settings, adminOnly: true },

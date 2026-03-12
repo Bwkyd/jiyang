@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { ScanInput } from "@/components/sample/ScanInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +15,6 @@ import {
 import {
   AlertDialog,
   AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -30,20 +28,14 @@ import useSWR from "swr";
 
 interface PendingItem {
   skuCode: string;
-  name: string;
-  color: string | null;
-  size: string | null;
-  imageUrl: string | null;
 }
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export default function NewSamplePage() {
-  const router = useRouter();
   const [selectedTalentId, setSelectedTalentId] = useState<string>("");
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
   const [trackingNumber, setTrackingNumber] = useState("");
-  const [scanning, setScanning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [duplicateAlert, setDuplicateAlert] = useState<string | null>(null);
 
@@ -52,42 +44,15 @@ export default function NewSamplePage() {
   const talents = talentsData?.data || [];
 
   const handleScan = useCallback(
-    async (skuCode: string) => {
+    (skuCode: string) => {
       // 检查本地重复
       if (pendingItems.some((item) => item.skuCode === skuCode)) {
         toast.warning("该 SKU 已在寄样清单中");
         return;
       }
 
-      setScanning(true);
-      try {
-        const res = await fetch(
-          `/api/products/sku/${encodeURIComponent(skuCode)}`
-        );
-        const data = await res.json();
-
-        if (!res.ok) {
-          toast.error(data.error || "未找到该商品");
-          return;
-        }
-
-        const product = data.data;
-        setPendingItems((prev) => [
-          ...prev,
-          {
-            skuCode: product.skuCode,
-            name: product.name,
-            color: product.color,
-            size: product.size,
-            imageUrl: product.imageUrl,
-          },
-        ]);
-        toast.success(`已添加: ${product.name}`);
-      } catch {
-        toast.error("查询商品失败，请重试");
-      } finally {
-        setScanning(false);
-      }
+      setPendingItems((prev) => [...prev, { skuCode }]);
+      toast.success(`已添加: ${skuCode}`);
     },
     [pendingItems]
   );
@@ -191,7 +156,7 @@ export default function NewSamplePage() {
       {/* 扫码输入 */}
       <div className="space-y-2">
         <label className="text-sm font-medium">扫码添加样衣</label>
-        <ScanInput onScan={handleScan} loading={scanning} />
+        <ScanInput onScan={handleScan} />
       </div>
 
       {/* 寄样清单 */}
@@ -215,25 +180,8 @@ export default function NewSamplePage() {
                   className="flex items-center justify-between p-3 border rounded-md"
                 >
                   <div className="flex items-center gap-3">
-                    {item.imageUrl ? (
-                      <img
-                        src={item.imageUrl}
-                        alt={item.name}
-                        className="w-12 h-12 rounded object-cover"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded bg-muted flex items-center justify-center">
-                        <Package className="h-6 w-6 text-muted-foreground" />
-                      </div>
-                    )}
-                    <div>
-                      <p className="text-sm font-medium">{item.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        SKU: {item.skuCode}
-                        {item.color && ` · ${item.color}`}
-                        {item.size && ` · ${item.size}`}
-                      </p>
-                    </div>
+                    <Package className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-mono">{item.skuCode}</span>
                   </div>
                   <Button
                     variant="ghost"

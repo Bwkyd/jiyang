@@ -37,9 +37,28 @@ export function ScanInput({ onScan, disabled, loading }: ScanInputProps) {
     [onScan]
   );
 
+  // 扫码枪自动识别：输入停顿超过 200ms 且有内容则自动提交
+  const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setValue(val);
+
+      if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
+      if (val.trim()) {
+        autoSubmitRef.current = setTimeout(() => {
+          handleSubmit(val);
+        }, 200);
+      }
+    },
+    [handleSubmit]
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
+      if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
       handleSubmit(value);
     }
   };
@@ -51,7 +70,7 @@ export function ScanInput({ onScan, disabled, loading }: ScanInputProps) {
         type="text"
         placeholder="扫码或输入 SKU 编码..."
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={handleChange}
         onKeyDown={handleKeyDown}
         disabled={disabled}
         className="text-lg h-12 pr-10"

@@ -13,9 +13,14 @@ export const createBatchSampleSchema = z.object({
 });
 
 export const updateSampleStatusSchema = z.object({
-  status: z.enum(["collecting", "pending_receipt", "returned", "abnormal"]),
+  status: z.enum(["sent", "returned"]),
   abnormalNote: z.string().max(500).optional(),
   returnTrackingNumber: z.string().max(50).optional(),
+});
+
+export const updateSampleTagsSchema = z.object({
+  abnormalNote: z.string().max(500).nullable().optional(),
+  returnTrackingNumber: z.string().max(50).nullable().optional(),
 });
 
 export type CreateBatchSampleInput = z.infer<typeof createBatchSampleSchema>;

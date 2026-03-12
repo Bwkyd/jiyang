@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { StatusBadge } from "@/components/sample/StatusBadge";
+import { StatusBadge, SampleTags } from "@/components/sample/StatusBadge";
 import {
   ArrowLeft,
   Package,
@@ -19,23 +19,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import useSWR, { mutate } from "swr";
-import { STATUS_TRANSITIONS, type SampleStatus } from "@/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-function formatName(name: string | null): string {
-  if (!name) return "-";
-  let short = name.replace(/^[\[【][^\]】]*[\]】]\s*/g, "");
-  short = short.replace(/^ZHUHE祝赫-/i, "");
-  return short;
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  sent: "已寄出",
-  pending_receipt: "待收货",
-  returned: "已归还",
-  abnormal: "异常",
-};
 
 export default function SampleDetailPage({
   params,
@@ -55,14 +40,11 @@ export default function SampleDetailPage({
   const { data, isLoading } = useSWR(swrKey, fetcher);
   const sample = data?.data;
 
-  const handleStatusChange = async (newStatus: SampleStatus) => {
+  const handleReturn = async () => {
     setUpdatingStatus(true);
     try {
-      const body: Record<string, string> = { status: newStatus };
-      if (newStatus === "abnormal" && abnormalNote) {
-        body.abnormalNote = abnormalNote;
-      }
-      if (newStatus === "returned" && returnTrackingNumber) {
+      const body: Record<string, string> = { status: "returned" };
+      if (returnTrackingNumber) {
         body.returnTrackingNumber = returnTrackingNumber;
       }
 
@@ -78,7 +60,35 @@ export default function SampleDetailPage({
         return;
       }
 
-      toast.success("状态已更新");
+      toast.success("已确认归还");
+      setReturnTrackingNumber("");
+      mutate(swrKey);
+    } catch {
+      toast.error("操作失败");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleTagUpdate = async (tags: {
+    abnormalNote?: string | null;
+    returnTrackingNumber?: string | null;
+  }) => {
+    setUpdatingStatus(true);
+    try {
+      const res = await fetch(`/api/samples/${id}/tags`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tags),
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        toast.error(result.error || "更新失败");
+        return;
+      }
+
+      toast.success("已更新");
       setAbnormalNote("");
       setReturnTrackingNumber("");
       mutate(swrKey);
@@ -130,8 +140,7 @@ export default function SampleDetailPage({
     );
   }
 
-  const currentStatus = sample.status as SampleStatus;
-  const allowedTransitions = STATUS_TRANSITIONS[currentStatus] || [];
+  const isSent = sample.status === "sent";
   const daysSinceSent = Math.floor(
     (Date.now() - new Date(sample.sentAt).getTime()) / (1000 * 60 * 60 * 24)
   );
@@ -149,37 +158,21 @@ export default function SampleDetailPage({
       {/* 样衣信息卡片 */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex gap-4">
-            {sample.productImage ? (
-              <img
-                src={sample.productImage}
-                alt=""
-                width={96}
-                height={96}
-                loading="lazy"
-                decoding="async"
-                className="w-24 h-24 rounded-lg object-cover flex-shrink-0 bg-muted"
-              />
-            ) : (
-              <div className="w-24 h-24 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                <Package className="h-10 w-10 text-muted-foreground" />
-              </div>
-            )}
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+              <Package className="h-6 w-6 text-muted-foreground" />
+            </div>
             <div className="flex-1 min-w-0 space-y-1.5">
-              <h3 className="font-semibold text-lg">
-                {formatName(sample.productName)}
+              <h3 className="font-semibold text-lg font-mono">
+                {sample.skuCode}
               </h3>
-              <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                {sample.productColor && (
-                  <span>{sample.productColor}</span>
-                )}
-                {sample.productSize && (
-                  <span>{sample.productSize}</span>
-                )}
-                <span className="font-mono">{sample.skuCode}</span>
-              </div>
-              <div className="pt-1">
-                <StatusBadge status={currentStatus} />
+              <div className="flex items-center gap-2 pt-1">
+                <StatusBadge status={sample.status} />
+                <SampleTags
+                  abnormalNote={sample.abnormalNote}
+                  returnTrackingNumber={sample.returnTrackingNumber}
+                  status={sample.status}
+                />
               </div>
             </div>
           </div>
@@ -247,47 +240,60 @@ export default function SampleDetailPage({
         </CardContent>
       </Card>
 
-      {/* 状态操作 */}
-      {allowedTransitions.length > 0 && (
+      {/* 操作区域 - 仅已寄出状态显示 */}
+      {isSent && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">更新状态</CardTitle>
+            <CardTitle className="text-base">操作</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {allowedTransitions.includes("returned" as SampleStatus) && (
-              <div className="space-y-2">
-                <Input
-                  placeholder="回寄快递单号（选填）"
-                  value={returnTrackingNumber}
-                  onChange={(e) => setReturnTrackingNumber(e.target.value)}
-                />
+          <CardContent className="space-y-4">
+            {/* 回寄单号 + 确认归还/标记待收货 */}
+            {!sample.returnTrackingNumber && (
+              <Input
+                placeholder="回寄快递单号（选填）"
+                value={returnTrackingNumber}
+                onChange={(e) => setReturnTrackingNumber(e.target.value)}
+              />
+            )}
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                disabled={updatingStatus}
+                onClick={handleReturn}
+              >
+                确认归还
+              </Button>
+              {!sample.returnTrackingNumber ? (
                 <Button
-                  className="w-full"
+                  className="flex-1"
+                  variant="outline"
+                  disabled={updatingStatus || !returnTrackingNumber.trim()}
+                  onClick={() =>
+                    handleTagUpdate({
+                      returnTrackingNumber: returnTrackingNumber,
+                    })
+                  }
+                >
+                  标记待收货
+                </Button>
+              ) : (
+                <Button
+                  className="flex-1"
                   variant="outline"
                   disabled={updatingStatus}
                   onClick={() =>
-                    handleStatusChange("returned" as SampleStatus)
+                    handleTagUpdate({ returnTrackingNumber: null })
                   }
                 >
-                  确认归还
+                  取消待收货
                 </Button>
-              </div>
-            )}
-            {allowedTransitions.includes(
-              "pending_receipt" as SampleStatus
-            ) && (
-              <Button
-                className="w-full"
-                variant="outline"
-                disabled={updatingStatus}
-                onClick={() =>
-                  handleStatusChange("pending_receipt" as SampleStatus)
-                }
-              >
-                标记待收货
-              </Button>
-            )}
-            {allowedTransitions.includes("abnormal" as SampleStatus) && (
+              )}
+            </div>
+
+            <Separator />
+
+            {/* 标记异常 */}
+            {!sample.abnormalNote ? (
               <div className="space-y-2">
                 <Input
                   placeholder="异常原因说明"
@@ -299,12 +305,21 @@ export default function SampleDetailPage({
                   variant="destructive"
                   disabled={updatingStatus || !abnormalNote.trim()}
                   onClick={() =>
-                    handleStatusChange("abnormal" as SampleStatus)
+                    handleTagUpdate({ abnormalNote: abnormalNote })
                   }
                 >
                   标记异常
                 </Button>
               </div>
+            ) : (
+              <Button
+                className="w-full"
+                variant="outline"
+                disabled={updatingStatus}
+                onClick={() => handleTagUpdate({ abnormalNote: null })}
+              >
+                取消异常标记
+              </Button>
             )}
           </CardContent>
         </Card>

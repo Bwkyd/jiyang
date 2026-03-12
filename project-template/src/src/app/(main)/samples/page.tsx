@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBadge } from "@/components/sample/StatusBadge";
+import { StatusBadge, SampleTags } from "@/components/sample/StatusBadge";
 import {
   Plus,
   Download,
@@ -27,51 +27,22 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckSquare,
-  Package,
 } from "lucide-react";
 import { toast } from "sonner";
 import useSWR, { mutate } from "swr";
-import type { SampleStatus } from "@/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
-
-const statusOptions: { value: SampleStatus; label: string }[] = [
-  { value: "sent", label: "已寄出" },
-  { value: "pending_receipt", label: "待收货" },
-  { value: "returned", label: "已归还" },
-  { value: "abnormal", label: "异常" },
-];
-
-/**
- * 精简商品名称：去掉品牌前缀和达人专属标记，拼上颜色尺码
- */
-function formatProductName(
-  name: string | null,
-  color: string | null,
-  size: string | null
-): string {
-  if (!name) return "-";
-  // 去掉【xxx专属】[xxx专属] 前缀
-  let short = name.replace(/^[\[【][^\]】]*[\]】]\s*/g, "");
-  // 去掉品牌前缀 "ZHUHE祝赫-"
-  short = short.replace(/^ZHUHE祝赫-/i, "");
-  // 拼上颜色/尺码
-  const specs = [color, size].filter(Boolean).join(" ");
-  return specs ? `${short} ${specs}` : short;
-}
 
 interface SampleItem {
   id: number;
   skuCode: string;
   talentName: string | null;
-  status: SampleStatus;
+  status: string;
   trackingNumber: string | null;
+  returnTrackingNumber: string | null;
+  abnormalNote: string | null;
   sentAt: string;
   collectionCount: number;
-  productName: string | null;
-  productImage: string | null;
-  productColor: string | null;
-  productSize: string | null;
 }
 
 export default function SamplesPage() {
@@ -104,8 +75,8 @@ export default function SamplesPage() {
     setPage(1);
   }, [searchInput]);
 
-  // 批量状态更新
-  const handleBatchStatusChange = async (newStatus: SampleStatus) => {
+  // 批量确认归还
+  const handleBatchReturn = async () => {
     if (selectedIds.size === 0) return;
     try {
       const res = await fetch("/api/samples/batch-status", {
@@ -113,7 +84,7 @@ export default function SamplesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sampleIds: Array.from(selectedIds),
-          status: newStatus,
+          status: "returned",
         }),
       });
       const result = await res.json();
@@ -159,8 +130,8 @@ export default function SamplesPage() {
   const statusFilters = [
     { label: "全部", value: "" },
     { label: "已寄出", value: "sent" },
-    { label: "待收货", value: "pending_receipt" },
     { label: "已归还", value: "returned" },
+    { label: "待收货", value: "pending_receipt" },
     { label: "异常", value: "abnormal" },
   ];
 
@@ -236,7 +207,7 @@ export default function SamplesPage() {
             variant="outline"
             onClick={() => setBatchDialog(true)}
           >
-            批量改状态
+            批量确认归还
           </Button>
         </div>
       )}
@@ -271,7 +242,7 @@ export default function SamplesPage() {
                       />
                     </TableHead>
                   )}
-                  <TableHead>样衣</TableHead>
+                  <TableHead>SKU</TableHead>
                   <TableHead>达人</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="hidden md:table-cell">
@@ -298,34 +269,20 @@ export default function SamplesPage() {
                       </TableCell>
                     )}
                     <TableCell>
-                      <div className="flex items-center gap-3">
-                        {sample.productImage ? (
-                          <img
-                            src={sample.productImage}
-                            alt=""
-                            width={40}
-                            height={40}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-10 h-10 rounded object-cover flex-shrink-0 bg-muted"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                            <Package className="h-5 w-5 text-muted-foreground" />
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate max-w-[180px]">
-                            {formatProductName(sample.productName, sample.productColor, sample.productSize)}
-                          </p>
-                        </div>
-                      </div>
+                      <span className="text-sm font-mono">{sample.skuCode}</span>
                     </TableCell>
                     <TableCell className="text-sm">
                       {sample.talentName || "-"}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={sample.status} />
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <StatusBadge status={sample.status} />
+                        <SampleTags
+                          abnormalNote={sample.abnormalNote}
+                          returnTrackingNumber={sample.returnTrackingNumber}
+                          status={sample.status}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground hidden md:table-cell">
                       {new Date(sample.sentAt).toLocaleDateString("zh-CN")}
@@ -365,25 +322,24 @@ export default function SamplesPage() {
         </>
       )}
 
-      {/* 批量状态修改弹窗 */}
+      {/* 批量确认归还弹窗 */}
       <Dialog open={batchDialog} onOpenChange={setBatchDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              批量修改状态（{selectedIds.size} 条）
+              确认批量归还（{selectedIds.size} 条）
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            {statusOptions.map((opt) => (
-              <Button
-                key={opt.value}
-                variant="outline"
-                className="w-full"
-                onClick={() => handleBatchStatusChange(opt.value)}
-              >
-                {opt.label}
-              </Button>
-            ))}
+          <p className="text-sm text-muted-foreground">
+            将选中的 {selectedIds.size} 条寄样记录标记为已归还，此操作不可撤销。
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => setBatchDialog(false)}>
+              取消
+            </Button>
+            <Button onClick={handleBatchReturn}>
+              确认归还
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

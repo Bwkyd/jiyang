@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
-import { samples, talents, products, collections } from "@/lib/db/schema";
-import { eq, and, or, inArray, sql, desc, ilike } from "drizzle-orm";
-import { STATUS_TRANSITIONS, type SampleStatus } from "@/types";
+import { samples, talents, collections } from "@/lib/db/schema";
+import { eq, and, or, inArray, sql, desc, ilike, isNull, isNotNull } from "drizzle-orm";
+import type { SampleStatus } from "@/types";
 import { logAudit } from "./audit.service";
 
 /**
@@ -11,13 +11,11 @@ export async function checkDuplicateSample(
   talentId: number,
   skuCode: string
 ): Promise<boolean> {
-  const activeStatuses = ["sent", "collecting", "pending_receipt"];
-
   const existing = await db.query.samples.findFirst({
     where: and(
       eq(samples.talentId, talentId),
       eq(samples.skuCode, skuCode),
-      inArray(samples.status, activeStatuses)
+      eq(samples.status, "sent")
     ),
   });
 
@@ -75,17 +73,15 @@ export async function createSamples(params: {
 }
 
 /**
- * 更新寄样状态（严格遵循状态流转规则）
+ * 更新寄样状态（sent → returned）
  */
 export async function updateSampleStatus(params: {
   sampleId: number;
   userId: string;
   newStatus: SampleStatus;
-  abnormalNote?: string;
   returnTrackingNumber?: string;
 }) {
-  const { sampleId, userId, newStatus, abnormalNote, returnTrackingNumber } =
-    params;
+  const { sampleId, userId, newStatus, returnTrackingNumber } = params;
 
   const sample = await db.query.samples.findFirst({
     where: eq(samples.id, sampleId),
@@ -95,14 +91,10 @@ export async function updateSampleStatus(params: {
     throw new Error("寄样记录不存在");
   }
 
-  // 校验状态流转
-  const currentStatus = sample.status as SampleStatus;
-  const allowedTransitions = STATUS_TRANSITIONS[currentStatus];
+  const currentStatus = sample.status;
 
-  if (!allowedTransitions.includes(newStatus)) {
-    throw new Error(
-      `不允许从"${currentStatus}"变更为"${newStatus}"状态`
-    );
+  if (newStatus === "returned" && currentStatus !== "sent") {
+    throw new Error("只有已寄出的样衣才能确认归还");
   }
 
   const updateData: Record<string, unknown> = {
@@ -114,12 +106,8 @@ export async function updateSampleStatus(params: {
     updateData.returnedAt = new Date();
   }
 
-  if (newStatus === "abnormal" && abnormalNote) {
-    updateData.abnormalNote = abnormalNote;
-  }
-
-  if (returnTrackingNumber) {
-    updateData.returnTrackingNumber = returnTrackingNumber;
+  if (returnTrackingNumber !== undefined) {
+    updateData.returnTrackingNumber = returnTrackingNumber || null;
   }
 
   const [updated] = await db
@@ -136,7 +124,6 @@ export async function updateSampleStatus(params: {
     detail: {
       from: currentStatus,
       to: newStatus,
-      abnormalNote,
       returnTrackingNumber,
     },
   });
@@ -145,14 +132,63 @@ export async function updateSampleStatus(params: {
 }
 
 /**
+ * 更新寄样标记（异常备注、回寄单号/待收货）
+ */
+export async function updateSampleTags(params: {
+  sampleId: number;
+  userId: string;
+  abnormalNote?: string | null;
+  returnTrackingNumber?: string | null;
+}) {
+  const { sampleId, userId, abnormalNote, returnTrackingNumber } = params;
+
+  const sample = await db.query.samples.findFirst({
+    where: eq(samples.id, sampleId),
+  });
+
+  if (!sample) {
+    throw new Error("寄样记录不存在");
+  }
+
+  const updateData: Record<string, unknown> = {
+    updatedAt: new Date(),
+  };
+
+  if (abnormalNote !== undefined) {
+    updateData.abnormalNote = abnormalNote;
+  }
+
+  if (returnTrackingNumber !== undefined) {
+    updateData.returnTrackingNumber = returnTrackingNumber;
+  }
+
+  const [updated] = await db
+    .update(samples)
+    .set(updateData)
+    .where(eq(samples.id, sampleId))
+    .returning();
+
+  await logAudit({
+    userId,
+    action: "sample.tags_update",
+    targetType: "sample",
+    targetId: sampleId,
+    detail: { abnormalNote, returnTrackingNumber },
+  });
+
+  return updated;
+}
+
+/**
  * 查询寄样记录（支持筛选）
+ * filter 支持: sent, returned, pending_receipt(待收货标记), abnormal(异常标记)
  */
 export async function getSamples(params: {
-  userId?: string; // 商务过滤（admin 不传则查全部）
+  userId?: string;
   talentId?: number;
   status?: string;
   trackingNumber?: string;
-  keyword?: string; // 全局搜索：SKU / 达人名 / 快递单号
+  keyword?: string;
   page?: number;
   pageSize?: number;
 }) {
@@ -161,11 +197,24 @@ export async function getSamples(params: {
   const conditions = [];
   if (userId) conditions.push(eq(samples.userId, userId));
   if (talentId) conditions.push(eq(samples.talentId, talentId));
-  if (status) conditions.push(eq(samples.status, status));
+
+  // 筛选：真实状态 or 标记
+  if (status === "sent") {
+    conditions.push(eq(samples.status, "sent"));
+  } else if (status === "returned") {
+    conditions.push(eq(samples.status, "returned"));
+  } else if (status === "pending_receipt") {
+    // 待收货标记：已寄出 + 有回寄单号
+    conditions.push(eq(samples.status, "sent"));
+    conditions.push(isNotNull(samples.returnTrackingNumber));
+  } else if (status === "abnormal") {
+    // 异常标记：有异常备注
+    conditions.push(isNotNull(samples.abnormalNote));
+  }
+
   if (trackingNumber) {
     conditions.push(sql`samples.tracking_number ILIKE ${`%${trackingNumber}%`}`);
   }
-  // 全局关键字搜索：匹配 SKU、达人名或快递单号
   if (keyword) {
     const pattern = `%${keyword}%`;
     conditions.push(
@@ -179,7 +228,6 @@ export async function getSamples(params: {
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  // 获取样衣数据（带达人信息 + 商品信息）
   const data = await db
     .select({
       id: samples.id,
@@ -193,34 +241,29 @@ export async function getSamples(params: {
       abnormalNote: samples.abnormalNote,
       createdAt: samples.createdAt,
       updatedAt: samples.updatedAt,
-      // 达人信息
       talentName: talents.name,
-      // 商品信息
-      productName: products.name,
-      productImage: products.imageUrl,
-      productColor: products.color,
-      productSize: products.size,
     })
     .from(samples)
     .leftJoin(talents, eq(samples.talentId, talents.id))
-    .leftJoin(products, eq(samples.skuCode, products.skuCode))
     .where(where)
     .orderBy(desc(samples.sentAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize);
 
-  // 获取每条记录的催收/跟进次数
   const sampleIds = data.map((s) => s.id);
-  const collectionCounts = await db
-    .select({
-      sampleId: collections.sampleId,
-      count: sql<number>`count(*)`,
-    })
-    .from(collections)
-    .where(inArray(collections.sampleId, sampleIds))
-    .groupBy(collections.sampleId);
+  let countMap = new Map<number, number>();
+  if (sampleIds.length > 0) {
+    const collectionCounts = await db
+      .select({
+        sampleId: collections.sampleId,
+        count: sql<number>`count(*)`,
+      })
+      .from(collections)
+      .where(inArray(collections.sampleId, sampleIds))
+      .groupBy(collections.sampleId);
 
-  const countMap = new Map(collectionCounts.map((c) => [c.sampleId, Number(c.count)]));
+    countMap = new Map(collectionCounts.map((c) => [c.sampleId, Number(c.count)]));
+  }
 
   const dataWithCounts = data.map((s) => ({
     ...s,
@@ -242,16 +285,15 @@ export async function getSamples(params: {
 }
 
 /**
- * 批量更新寄样状态
+ * 批量确认归还
  */
 export async function batchUpdateSampleStatus(params: {
   sampleIds: number[];
   userId: string;
   newStatus: SampleStatus;
-  abnormalNote?: string;
   returnTrackingNumber?: string;
 }) {
-  const { sampleIds, userId, newStatus, abnormalNote, returnTrackingNumber } = params;
+  const { sampleIds, userId, newStatus, returnTrackingNumber } = params;
   const results: { id: number; success: boolean; error?: string }[] = [];
 
   for (const sampleId of sampleIds) {
@@ -260,7 +302,6 @@ export async function batchUpdateSampleStatus(params: {
         sampleId,
         userId,
         newStatus,
-        abnormalNote,
         returnTrackingNumber,
       });
       results.push({ id: sampleId, success: true });
@@ -290,7 +331,14 @@ export async function exportSamplesCSV(params: {
   const conditions = [];
   if (userId) conditions.push(eq(samples.userId, userId));
   if (talentId) conditions.push(eq(samples.talentId, talentId));
-  if (status) conditions.push(eq(samples.status, status));
+  if (status === "sent" || status === "returned") {
+    conditions.push(eq(samples.status, status));
+  } else if (status === "pending_receipt") {
+    conditions.push(eq(samples.status, "sent"));
+    conditions.push(isNotNull(samples.returnTrackingNumber));
+  } else if (status === "abnormal") {
+    conditions.push(isNotNull(samples.abnormalNote));
+  }
   if (keyword) {
     const pattern = `%${keyword}%`;
     conditions.push(
@@ -315,46 +363,36 @@ export async function exportSamplesCSV(params: {
       sentAt: samples.sentAt,
       returnedAt: samples.returnedAt,
       abnormalNote: samples.abnormalNote,
-      productName: products.name,
-      color: products.color,
-      size: products.size,
     })
     .from(samples)
     .leftJoin(talents, eq(samples.talentId, talents.id))
-    .leftJoin(products, eq(samples.skuCode, products.skuCode))
     .where(where)
     .orderBy(desc(samples.sentAt));
 
-  const STATUS_LABEL_MAP: Record<string, string> = {
-    sent: "已寄出",
-    pending_receipt: "待收货",
-    returned: "已归还",
-    abnormal: "异常",
-  };
-
-  const header = "ID,SKU,商品名称,颜色,尺码,达人,状态,快递单号,回寄单号,寄出时间,归还时间,异常备注";
-  const rows = data.map((s) =>
-    [
+  const header = "ID,SKU,达人,状态,标记,快递单号,回寄单号,寄出时间,归还时间,异常备注";
+  const rows = data.map((s) => {
+    const tags = [];
+    if (s.status === "sent" && s.returnTrackingNumber) tags.push("待收货");
+    if (s.abnormalNote) tags.push("异常");
+    return [
       s.id,
       s.skuCode,
-      `"${(s.productName || "").replace(/"/g, '""')}"`,
-      s.color || "",
-      s.size || "",
       s.talentName || "",
-      STATUS_LABEL_MAP[s.status] || s.status,
+      s.status === "sent" ? "已寄出" : "已归还",
+      tags.join("/"),
       s.trackingNumber || "",
       s.returnTrackingNumber || "",
       s.sentAt ? new Date(s.sentAt).toLocaleDateString("zh-CN") : "",
       s.returnedAt ? new Date(s.returnedAt).toLocaleDateString("zh-CN") : "",
       `"${(s.abnormalNote || "").replace(/"/g, '""')}"`,
-    ].join(",")
-  );
+    ].join(",");
+  });
 
   return "\uFEFF" + header + "\n" + rows.join("\n");
 }
 
 /**
- * 获取单条寄样详情（含商品信息、达人信息、跟进记录）
+ * 获取单条寄样详情（含达人信息、跟进记录）
  */
 export async function getSampleById(sampleId: number) {
   const [data] = await db
@@ -373,19 +411,13 @@ export async function getSampleById(sampleId: number) {
       userId: samples.userId,
       talentName: talents.name,
       talentPhone: talents.phone,
-      productName: products.name,
-      productImage: products.imageUrl,
-      productColor: products.color,
-      productSize: products.size,
     })
     .from(samples)
     .leftJoin(talents, eq(samples.talentId, talents.id))
-    .leftJoin(products, eq(samples.skuCode, products.skuCode))
     .where(eq(samples.id, sampleId));
 
   if (!data) return null;
 
-  // 获取跟进记录
   const collectionList = await db
     .select({
       id: collections.id,
@@ -400,12 +432,13 @@ export async function getSampleById(sampleId: number) {
 }
 
 /**
- * 获取寄样状态统计
+ * 获取寄样统计
  */
 export async function getSampleStats(userId?: string) {
   const condition = userId ? eq(samples.userId, userId) : undefined;
 
-  const stats = await db
+  // 按状态统计
+  const statusStats = await db
     .select({
       status: samples.status,
       count: sql<number>`count(*)`,
@@ -414,11 +447,32 @@ export async function getSampleStats(userId?: string) {
     .where(condition)
     .groupBy(samples.status);
 
-  return stats.reduce(
-    (acc, row) => {
-      acc[row.status] = Number(row.count);
-      return acc;
-    },
-    {} as Record<string, number>
-  );
+  const result: Record<string, number> = {};
+  for (const row of statusStats) {
+    result[row.status] = Number(row.count);
+  }
+
+  // 待收货数量：sent + 有回寄单号
+  const [pendingResult] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(samples)
+    .where(
+      and(
+        condition,
+        eq(samples.status, "sent"),
+        isNotNull(samples.returnTrackingNumber)
+      )
+    );
+  result["pending_receipt"] = Number(pendingResult.count);
+
+  // 异常数量
+  const [abnormalResult] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(samples)
+    .where(
+      and(condition, isNotNull(samples.abnormalNote))
+    );
+  result["abnormal"] = Number(abnormalResult.count);
+
+  return result;
 }
