@@ -75,9 +75,7 @@ export const samples = pgTable(
     talentId: integer("talent_id")
       .notNull()
       .references(() => talents.id),
-    skuCode: varchar("sku_code", { length: 50 })
-      .notNull()
-      .references(() => products.skuCode),
+    skuCode: varchar("sku_code", { length: 50 }).notNull(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),

@@ -45,22 +45,6 @@ export default async function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">微信小店同步</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            商品数据从微信小店同步，当前版本仅支持手动同步
-          </p>
-          <form action="/api/products/sync" method="POST">
-            <Button type="submit" variant="outline">
-              同步商品数据
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle className="text-base">关于</CardTitle>
         </CardHeader>
         <CardContent>
